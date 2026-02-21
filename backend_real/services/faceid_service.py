@@ -38,6 +38,8 @@ class FaceIdService:
         self._face_size = (160, 160)
         self._confidence_threshold = float(os.getenv("FACEID_CONFIDENCE_THRESHOLD", "65"))
         self._min_samples = int(os.getenv("FACEID_MIN_SAMPLES", "8"))
+        
+        self._liveness_blur_threshold = 100.0
 
         self._samples_path.mkdir(parents=True, exist_ok=True)
         self._models_path.mkdir(parents=True, exist_ok=True)
@@ -48,6 +50,11 @@ class FaceIdService:
                 cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             )
 
+
+    def _check_liveness_blur(self, face_gray) -> bool:
+        varianza = cv2.Laplacian(face_gray, cv2.CV_64F).var()
+        return varianza > self._liveness_blur_threshold
+        
     @staticmethod
     def _normalize_user_key(user_key: str) -> str:
         normalized = str(user_key or "").strip().lower()
@@ -180,11 +187,20 @@ class FaceIdService:
                 rostros_detectados=0,
             )
 
+        if not self._check_liveness_blur(face_gray):
+            print("[ALERTA] Posible ataque de presentación (Foto impresa o pantalla detectada).")
+            return FaceVerificationResult(
+                autorizado=False,
+                confianza_lbph=None, 
+                rostros_detectados=1,
+            )
+
         recognizer = self._create_lbph()
         recognizer.read(str(model_path))
         processed = self._preprocess_face(face_gray)
         label, confidence = recognizer.predict(processed)
         authorized = bool(int(label) == 1 and float(confidence) <= self._confidence_threshold)
+        
         return FaceVerificationResult(
             autorizado=authorized,
             confianza_lbph=float(confidence),
